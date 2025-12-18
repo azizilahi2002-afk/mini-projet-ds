@@ -56,7 +56,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install pre-commit
 
       # Étape 5 : Exécuter les hooks pre-commit (linting, formatage, scan secrets)
       - name: Run pre-commit hooks
