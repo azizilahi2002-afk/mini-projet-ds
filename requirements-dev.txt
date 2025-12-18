@@ -7,3 +7,4 @@ detect-secrets
 nbstripout
 pip-audit
 bandit
+pre-commit
