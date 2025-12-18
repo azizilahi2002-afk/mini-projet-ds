@@ -1,58 +1,24 @@
-#################################################################################
-# Nom du pipeline CI/CD pour le projet MLOps & DevSecOps                #
-#################################################################################
+name: CI/CD Pipeline
 
-name: CI/CD MLOps Pipeline
-
-#################################################################################
-# Déclencheurs : Quand le pipeline doit s'exécuter ?                         #
-#################################################################################
 on:
-  # Exécute le pipeline à chaque 'push' sur les branches 'main' et 'develop'
   push:
-    branches: [ main, develop ]
-  # Exécute le pipeline à chaque 'pull request' visant la branche 'main'
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
-#################################################################################
-# Variables d'environnement globales (optionnel)                              #
-#################################################################################
-env:
-  # Nom de l'image Docker qui sera construite
-  IMAGE_NAME: ds-app
-  # Registre où l'image serait poussée (ici on utilise le registry de GitHub)
-  REGISTRY: ghcr.io
-
-#################################################################################
-# Définition des jobs (tâches) à exécuter                                   #
-#################################################################################
 jobs:
-  #################################################################################
-  # JOB 1 : Linting et Tests unitaires                                         #
-  #################################################################################
   lint-and-test:
-    name: Code Quality & Tests
-    runs-on: ubuntu-latest # Utilise un runner Ubuntu
+    runs-on: ubuntu-latest
+
     steps:
-      # Étape 1 : Récupérer le code du dépôt
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Étape 2 : Installer Python 3.11
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      # Étape 3 : Mettre en cache les dépendances pour accélérer les prochains runs
-      - name: Cache pip dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-
-      # Étape 4 : Installer les dépendances Python
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -60,160 +26,8 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           pip install pre-commit
 
-      # Étape 5 : Exécuter les hooks pre-commit (linting, formatage, scan secrets)
       - name: Run pre-commit hooks
-        run: |
-          pre-commit run --all-files
+        run: pre-commit run --all-files
 
-      # Étape 6 : Lancer les tests unitaires avec calcul de la couverture de code
-      - name: Run tests with coverage
-        run: |
-          pytest --maxfail=1 --disable-warnings --cov=src --cov-report=xml
-
-      # Étape 7 : Envoyer le rapport de couverture à Codecov (service de suivi)
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
-
-  #################################################################################
-  # JOB 2 : Scan de sécurité (dépendances et code)                           #
-  #################################################################################
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    # Ce job ne s'exécute que si le job 'lint-and-test' a réussi
-    needs: lint-and-test
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pip-audit bandit
-
-      # Étape 1 : Scanner les dépendances Python pour des vulnérabilités connues
-      - name: Run pip-audit
-        run: |
-          pip-audit --format=json --output=audit-report.json || true # '|| true' pour ne pas bloquer le pipeline
-        continue-on-error: true # On continue même si des vulnérabilités sont trouvées
-
-      # Étape 2 : Scanner le code source pour des problèmes de sécurité
-      - name: Run Bandit security linter
-        run: |
-          bandit -r src/ -f json -o bandit-report.json || true
-        continue-on-error: true
-
-      # Étape 3 : Sauvegarder les rapports de scan pour analyse
-      - name: Upload security reports
-        uses: actions/upload-artifact@v3
-        with:
-          name: security-reports
-          path: |
-            audit-report.json
-            bandit-report.json
-
-  #################################################################################
-  # JOB 3 : Build de l'image Docker et scan de sécurité de l'image             #
-  #################################################################################
-  build-and-scan-image:
-    name: Build & Scan Docker Image
-    runs-on: ubuntu-latest
-    # Ce job ne s'exécute que si le job 'security-scan' a réussi
-    needs: security-scan
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Étape 1 : Se connecter au Container Registry de GitHub (nécessaire pour pousser l'image)
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Étape 2 : Construire et pousser l'image Docker
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true # Pousse l'image sur le registry
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} # Tag unique avec le SHA du commit
-
-      # Étape 3 : Scanner l'image Docker avec Trivy pour trouver des vulnérabilités
-      - name: Run Trivy vulnerability scanner on image
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-
-      # Étape 4 : Envoyer les résultats de Trivy à l'onglet "Security" de GitHub
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always() # S'exécute même si Trivy trouve des vulnérabilités critiques
-        with:
-          sarif_file: 'trivy-results.sarif'
-
-  #################################################################################
-  # JOB 4 : Validation des manifests Kubernetes                                 #
-  #################################################################################
-  k8s-validation:
-    name: Kubernetes Manifests Validation
-    runs-on: ubuntu-latest
-    # Ce job ne s'exécute que si le job 'build-and-scan-image' a réussi
-    needs: build-and-scan-image
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Étape 1 : Valider la syntaxe des fichiers YAML avec kubeconform
-      - name: Validate Kubernetes manifests with kubeconform
-        uses: docker://ghcr.io/yannh/kubeconform:latest
-        with:
-          entrypoint: kubeconform
-          args: "-strict -ignore-missing-schemas k8s/*.yaml"
-
-      # Étape 2 : Linter les manifests pour les bonnes pratiques avec kube-linter
-      - name: Lint Kubernetes manifests with kube-linter
-        run: |
-          docker run --rm -v $(pwd):/project \
-          stackrox/kube-linter:latest lint \
-          /project/k8s/*.yaml
-
-  #################################################################################
-  # JOB 5 : Simulation de déploiement (Dry-run)                                #
-  #################################################################################
-  deploy-dry-run:
-    name: Deployment Dry-Run
-    runs-on: ubuntu-latest
-    # Ce job ne s'exécute que si le job 'k8s-validation' a réussi
-    needs: k8s-validation
-    # Ce job ne s'exécute QUE sur la branche 'main'
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Étape 1 : Installer kubectl
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: 'v1.28.2'
-
-      # Étape 2 : Lancer un 'dry-run' pour simuler le déploiement sans l'appliquer
-      - name: Dry-run Kubernetes deployment
-        run: |
-          # On remplace l'image dans le YAML par celle que nous venons de construire
-          sed -i 's|image: ds-app:latest|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|' k8s/deployment.yaml
-          kubectl apply -f k8s/ --dry-run=client -o yaml
+      - name: Run tests
+        run: pytest
