@@ -1,0 +1,173 @@
+name: CI/CD Pipeline
+
+# QUAND le workflow doit s'exécuter
+on:
+  # Sur push sur les branches main ou develop
+  push:
+    branches: [ main, develop ]
+  # Sur pull request vers la branche main
+  pull_request:
+    branches: [ main ]
+
+# LES JOBS (tâches) à exécuter
+jobs:
+  # JOB 1: Linting et Tests
+  lint-and-test:
+    # Exécuter sur une machine Ubuntu
+    runs-on: ubuntu-latest
+    
+    steps:
+      # Étape 1: Récupérer le code
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Étape 2: Configurer Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      # Étape 3: Mettre en cache les dépendances (pour accélérer)
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+      
+      # Étape 4: Installer les dépendances
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      
+      # Étape 5: Exécuter pre-commit
+      - name: Run pre-commit hooks
+        run: |
+          pip install pre-commit
+          pre-commit run --all-files
+      
+      # Étape 6: Exécuter les tests avec couverture
+      - name: Run tests with coverage
+        run: |
+          pytest --maxfail=1 --disable-warnings \
+            --cov=src --cov-report=term-missing \
+            --cov-report=xml
+      
+      # Étape 7: Uploader la couverture de code sur Codecov
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+
+  # JOB 2: Analyse de sécurité
+  security-scan:
+    runs-on: ubuntu-latest
+    # Ce job dépend du succès du job lint-and-test
+    needs: lint-and-test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      # Étape: Auditer les dépendances Python
+      - name: Run pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit --require-hashes --disable-pip
+        continue-on-error: true  # Continue même si des vulnérabilités sont trouvées
+      
+      # Étape: Analyser le code pour des failles de sécurité
+      - name: Run Bandit security scan
+        run: |
+          pip install bandit
+          bandit -r src/ -f json -o bandit-report.json
+        continue-on-error: true
+      
+      # Étape: Sauvegarder les rapports de sécurité
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+
+  # JOB 3: Build et scan de l'image Docker
+  build-and-scan-image:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Étape: Construire l'image Docker
+      - name: Build Docker image
+        run: docker build -t ds-app:${{ github.sha }} .
+      
+      # Étape: Scanner l'image Docker avec Trivy
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: 'ds-app:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'  # Seulement les vulnérabilités critiques et hautes
+          exit-code: '1'  # Échoue si des vulnérabilités sont trouvées
+      
+      # Étape: Uploader les résultats du scan (toujours, même en cas d'échec)
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()  # S'exécute même si le scan échoue
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # JOB 4: Validation des manifests Kubernetes
+  k8s-validation:
+    runs-on: ubuntu-latest
+    needs: build-and-scan-image
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Étape: Valider la syntaxe des fichiers Kubernetes
+      - name: Validate Kubernetes manifests
+        uses: docker://ghcr.io/yannh/kubeconform:latest
+        with:
+          entrypoint: kubeconform
+          args: "-strict -ignore-missing-schemas k8s/*.yaml"
+      
+      # Étape: Linter les manifests Kubernetes (bonnes pratiques)
+      - name: Lint Kubernetes manifests
+        run: |
+          docker run --rm -v $(pwd):/project \
+            stackrox/kube-linter:latest lint \
+            /project/k8s/*.yaml
+
+  # JOB 5: Dry-run du déploiement (seulement sur main)
+  deploy-dry-run:
+    runs-on: ubuntu-latest
+    needs: k8s-validation
+    # S'exécute seulement sur la branche main
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Étape: Installer kubectl
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+      
+      # Étape: Simuler un déploiement (sans réellement déployer)
+      - name: Dry-run deployment
+        run: |
+          kubectl apply -f k8s/ --dry-run=client --validate=true

@@ -1,0 +1,38 @@
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Data et modèles (trop volumineux)
+data/*.csv
+data/*.parquet
+models/*.pkl
+models/*.h5
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Tests et CI
+tests/
+.github/
+.pytest_cache/
+
+# Documentation
+docs/
+*.md
+!README.md

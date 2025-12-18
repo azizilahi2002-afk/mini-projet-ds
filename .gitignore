@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Data & Models
+data/*.csv
+data/*.parquet
+models/*.pkl
+models/*.h5
+
+# Secrets
+.env
+*.key
+secrets.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Jupyter
+*.ipynb_checkpoints
+.ipynb

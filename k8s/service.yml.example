@@ -1,0 +1,11 @@
+# NE PAS COMMITTER CE FICHIER AVEC DE VRAIES VALEURS !
+# Copier vers secrets.yaml et remplacer les valeurs
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ds-app-secrets
+  type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://user:pass@localhost:5432/db"
+  API_KEY: "your-api-key-here"
+  MODEL_PATH: "/app/models/model_latest.pkl"

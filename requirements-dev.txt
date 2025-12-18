@@ -1,0 +1,9 @@
+-r requirements.txt
+pytest
+pytest-cov
+black
+ruff
+detect-secrets
+nbstripout
+pip-audit
+bandit

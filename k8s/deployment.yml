@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ds-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ds-app
+  template:
+    metadata:
+      labels:
+        app: ds-app
+    spec:
+      containers:
+        - name: api
+          image: ds-app
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
